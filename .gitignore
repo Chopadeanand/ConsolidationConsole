@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Streamlit (keep config but ignore local cache)
+.streamlit/cache/
+
+# Environment
+venv/
+.env
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Temp / logs
+*.log
+tmp/
+temp/
+
