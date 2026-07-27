@@ -1,7 +1,7 @@
 """
-merge_month_and_fill_v3.py
+merge_month_and_fill_v4.py
 ---------------------------
-Drop-in replacement for merge_month_and_fill_v2.py. Same job as v2 --
+Drop-in replacement for merge_month_and_fill_v3.py. Same job as v3 --
 merge a month's raw rating files into the existing consolidated master
 workbook (Sheet1) and statically compute the derived columns so nothing
 needs to auto-recalculate on open -- but now ALSO computes:
@@ -11,10 +11,14 @@ needs to auto-recalculate on open -- but now ALSO computes:
                                used in the one-off manual pass.
     AX  "Invit/Non-Invit"   -- looked up from the PROJECT_INVIT_MAP
                                table below (Project Name -> status).
+    AY  "Regional Head"     -- looked up from the
+                               PROJECT_REGIONAL_HEAD_MAP table below
+                               (Project Name -> Regional Head), hardcoded
+                               the same way as Invit/Non-Invit.
 
 for EVERY row -- both the rows already in the master and the newly
 appended month's rows -- every single time you run this script. There
-is no live formula anywhere for AW/AX (or AA:AV): they are plain
+is no live formula anywhere for AW/AX/AY (or AA:AV): they are plain
 values, computed once in Python, so the file opens instantly with
 correct numbers already in place, no matter how many months you've
 accumulated.
@@ -27,11 +31,11 @@ error-prone. This script makes each month's merge a single command.
 
 USAGE
 -----
-    python merge_month_and_fill_v3.py <master.xlsx> <raw_month_folder> [output.xlsx]
+    python merge_month_and_fill_v4.py <master.xlsx> <raw_month_folder> [output.xlsx]
 
 <master.xlsx>        the consolidated workbook as of last month (e.g.
                       containing April+May+June data, with Sheet1 columns
-                      A:AX already -- or even just A:AV; see note below).
+                      A:AY already -- or even just A:AV/A:AX; see note below).
 <raw_month_folder>   EITHER a folder containing that month's raw .csv/.xlsx
                       files (e.g. the 27 July files), OR a .zip archive
                       of them (they may be nested inside a sub-folder
@@ -48,37 +52,39 @@ USAGE
 To just re-flatten/re-fix an existing file with NO new rows to add
 (e.g. you edited Sheet5's Vendor/Inhouse table and want AW recomputed
 everywhere), point <raw_month_folder> at an empty directory and it will
-still rebuild AA:AX for every existing row.
+still rebuild AA:AY for every existing row.
 
 NEXT MONTH
 ----------
 Just point <master.xlsx> at THIS script's own output and give it the
 new month's folder:
 
-    python merge_month_and_fill_v3.py Consolidated_Apr_May_Jun_Jul.xlsx aug_files/ Consolidated_Apr_thru_Aug.xlsx
+    python merge_month_and_fill_v4.py Consolidated_Apr_May_Jun_Jul.xlsx aug_files/ Consolidated_Apr_thru_Aug.xlsx
 
 Each run's output becomes next month's input. The chain of months
 keeps growing; nothing has to be recomputed by hand.
 
-IF YOUR MASTER ONLY HAS COLUMNS A:AV (NO AW/AX YET)
------------------------------------------------------
-That's fine -- the script detects that the header row has no AW1/AX1
-cell and adds the two header labels itself before writing data, so you
-can point this straight at the original June-and-earlier master and it
-will backfill AW/AX for all the old rows too, in the same run. The new
-AW1/AX1 header cells are given the same style as the other headers, so
-they come out colored blue like the rest of row 1 instead of plain/
-unstyled.
+IF YOUR MASTER ONLY HAS COLUMNS A:AV OR A:AX (NO AY YET, OR NO AW/AX/AY YET)
+-----------------------------------------------------------------------------
+That's fine -- the script detects which of the header cells AW1/AX1/AY1
+are missing and adds only those labels itself before writing data, so
+you can point this straight at the original June-and-earlier (A:AV)
+master, or at last month's (A:AX) master, and it will backfill
+whichever of AW/AX/AY are missing for all the old rows too, in the same
+run. The new header cells are given the same style as the other
+headers, so they come out colored blue like the rest of row 1 instead
+of plain/unstyled.
 
-MAINTAINING THE PROJECT -> INVIT/NON-INVIT TABLE
---------------------------------------------------
+MAINTAINING THE PROJECT -> INVIT/NON-INVIT AND REGIONAL HEAD TABLES
+----------------------------------------------------------------------
 Unlike Vendor/Inhouse (which lives in the workbook's Sheet5 and so
-updates automatically if you edit that sheet), Invit/Non-Invit has no
-sheet of its own in the master -- it was given as a fixed list of 27
-project codes. Edit PROJECT_INVIT_MAP below when a new project code
-shows up that isn't in the list yet; the script will warn you loudly
-(rather than silently guessing) if it hits a project code with no
-entry.
+updates automatically if you edit that sheet), Invit/Non-Invit and
+Regional Head have no sheet of their own in the master -- each is a
+fixed list of 27 project codes. Edit PROJECT_INVIT_MAP or
+PROJECT_REGIONAL_HEAD_MAP below when a new project code shows up that
+isn't in the relevant list yet; the script will warn you loudly (rather
+than silently guessing) if it hits a project code with no entry in
+either table.
 """
 
 import sys, os, re, glob, zipfile, html, time, tempfile, shutil, atexit
@@ -264,6 +270,24 @@ PROJECT_INVIT_MAP = {
     "MKTPL": "Invit",     "MSHP": "Invit",     "NAM": "Invit",      "NDEPL": "Invit",
     "NKTPL": "Invit",     "SIPL": "Invit",     "SMTPL": "Invit",    "SPPL": "Invit",
     "WMPTL": "Non-Invit", "WUPTL": "Invit",    "WVEL": "Invit",
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Project Name -> Regional Head. Fixed, hardcoded list (no sheet in the
+# workbook holds this mapping), same style as PROJECT_INVIT_MAP above. Edit
+# PROJECT_REGIONAL_HEAD_MAP below when a new project code shows up that
+# isn't in the list yet; the script will warn loudly (rather than silently
+# guessing) if it hits a project code with no entry.
+# ──────────────────────────────────────────────────────────────────────────
+PROJECT_REGIONAL_HEAD_MAP = {
+    "ADTPL": "Mr KK Rao",     "APEL": "Ms Vasundhara", "BFHL": "Mr Sanjay",     "BWHPL": "Ms Vasundhara",
+    "DATL": "Mr Shreedhar",   "DHMEPL": "Mr Shreedhar","FRHL": "Mr Sanjay",     "GAEPL": "Mr Shreedhar",
+    "JMTPL": "Mr Shreedhar",  "JUHPL": "Mr Sanjay",    "KETPL": "Mr KK Rao",    "KHEPL": "Mr Shreedhar",
+    "KMTPL": "Mr Sanjay",     "KTIPL": "Ms Vasundhara","MBEL": "Mr Shreedhar",  "MHPL": "Ms Vasundhara",
+    "MKTPL": "Mr KK Rao",     "MSHP": "Ms Vasundhara", "NAM": "Mr KK Rao",      "NDEPL": "Mr KK Rao",
+    "NKTPL": "Mr KK Rao",     "SIPL": "Ms Vasundhara", "SMTPL": "Mr KK Rao",    "SPPL": "Ms Vasundhara",
+    "WMPTL": "Mr Shreedhar",  "WUPTL": "Mr Sanjay",    "WVEL": "Mr KK Rao",
 }
 
 
@@ -1043,8 +1067,8 @@ COLS_FLOAT = ["AM", "AN", "AO", "AP", "AQ", "AR", "AS", "AT", "AU"]
 
 
 def build_aa_av_xml(row_num: int, r: pd.Series, proj_map: dict,
-                     vendor_map: dict, invit_map: dict,
-                     unmapped_vendor: set, unmapped_invit: set,
+                     vendor_map: dict, invit_map: dict, regional_head_map: dict,
+                     unmapped_vendor: set, unmapped_invit: set, unmapped_regional: set,
                      ss: "SharedStringInterner") -> str:
     parts = []
     for col in COLS_INT:
@@ -1081,6 +1105,14 @@ def build_aa_av_xml(row_num: int, r: pd.Series, proj_map: dict,
     idx = ss.intern(invit_val)
     parts.append(f'<c r="AX{row_num}" t="s"><v>{idx}</v></c>')
 
+    # AY: Regional Head, from PROJECT_REGIONAL_HEAD_MAP (Project Name)
+    regional_val = regional_head_map.get(r["A"])
+    if regional_val is None:
+        unmapped_regional.add(r["A"])
+        regional_val = "#N/A"
+    idx = ss.intern(regional_val)
+    parts.append(f'<c r="AY{row_num}" t="s"><v>{idx}</v></c>')
+
     parts.append("</row>")
     return "".join(parts)
 
@@ -1104,7 +1136,7 @@ def patch_workbook_xml(xml: bytes, new_last_row: int, sheet5_last_row: int = Non
     xml = re.sub(
         rb'<definedName name="_xlnm\._FilterDatabase" localSheetId="0" hidden="1">'
         rb'Sheet1!\$A\$1:\$A[A-Z]\$\d+</definedName>',
-        lambda m: re.sub(rb'\$A[A-Z]\$\d+', ('$AX$' + str(new_last_row)).encode(), m.group(0)),
+        lambda m: re.sub(rb'\$A[A-Z]\$\d+', ('$AY$' + str(new_last_row)).encode(), m.group(0)),
         xml,
     )
     if sheet5_last_row is not None:
@@ -1128,16 +1160,17 @@ def patch_workbook_rels(xml: bytes) -> bytes:
     return re.sub(rb'<Relationship [^>]*Target="calcChain\.xml"\s*/>', b"", xml)
 
 
-def ensure_header_has_aw_ax(head_bytes: bytes) -> bytes:
-    """If the master's header row doesn't have AW1/AX1 yet (i.e. it only
-    goes up to AV, from before this script's AW/AX columns existed), add
+def ensure_header_has_aw_ax_ay(head_bytes: bytes) -> bytes:
+    """If the master's header row doesn't have AW1/AX1/AY1 yet (i.e. it only
+    goes up to AV, from before this script's AW/AX/AY columns existed), add
     them so the output always has proper headers -- this is what lets you
-    point this script straight at an old A:AV-only master."""
+    point this script straight at an old A:AV-only (or A:AX-only) master."""
     has_aw1 = b'<c r="AW1"' in head_bytes
     has_ax1 = b'<c r="AX1"' in head_bytes
+    has_ay1 = b'<c r="AY1"' in head_bytes
 
     # Reuse the style index of AV1 (the column immediately before AW) so
-    # AW1/AX1 always match the blue header formatting of AA1:AV1 -- NOT
+    # AW1/AX1/AY1 always match the blue header formatting of AA1:AV1 -- NOT
     # the first styled cell in the row. Some early columns (e.g. the
     # "Month" header T1) carry unrelated styles like DATE_STYLE, and
     # picking the first match found those instead of the real header style.
@@ -1150,9 +1183,9 @@ def ensure_header_has_aw_ax(head_bytes: bytes) -> bytes:
 
     def restyle_existing(hb: bytes, ref: str) -> bytes:
         """If ref (e.g. AW1) already exists, force its s="..." to style_num
-        -- covers masters that already have AW1/AX1 from a run made before
-        this styling fix existed, which would otherwise keep the bad style
-        forever since we'd never hit the 'add new cell' branch below."""
+        -- covers masters that already have AW1/AX1/AY1 from a run made
+        before this styling fix existed, which would otherwise keep the bad
+        style forever since we'd never hit the 'add new cell' branch below."""
         if style_num is None:
             return hb
         pattern = re.compile(rb'(<c r="' + ref.encode() + rb'")([^>]*)(>)')
@@ -1165,7 +1198,9 @@ def ensure_header_has_aw_ax(head_bytes: bytes) -> bytes:
         head_bytes = restyle_existing(head_bytes, "AW1")
     if has_ax1:
         head_bytes = restyle_existing(head_bytes, "AX1")
-    if has_aw1 and has_ax1:
+    if has_ay1:
+        head_bytes = restyle_existing(head_bytes, "AY1")
+    if has_aw1 and has_ax1 and has_ay1:
         return head_bytes
 
     style_attr = f' s="{style_num}"' if style_num else ""
@@ -1174,6 +1209,8 @@ def ensure_header_has_aw_ax(head_bytes: bytes) -> bytes:
         add += f'<c r="AW1"{style_attr} t="inlineStr"><is><t>Vendor/Inhouse</t></is></c>'
     if not has_ax1:
         add += f'<c r="AX1"{style_attr} t="inlineStr"><is><t>Invit/Non-Invit</t></is></c>'
+    if not has_ay1:
+        add += f'<c r="AY1"{style_attr} t="inlineStr"><is><t>Regional Head</t></is></c>'
     # header row is row 1; insert right before its closing </row>
     m = re.search(rb'(<row r="1"[^>]*>.*?)(</row>)', head_bytes, re.S)
     if not m:
@@ -1358,6 +1395,7 @@ def main():
 
         unmapped_vendor = set()
         unmapped_invit = set()
+        unmapped_regional = set()
 
         # Patch <dimension> in the small "head" slice (everything before row 1
         # -- a few hundred bytes) instead of regex-ing across the entire
@@ -1366,7 +1404,7 @@ def main():
         head_slice = sheet1_xml[0:pos["row_tag_start"][0]]
         head_slice = re.sub(
             rb'<dimension ref="[A-Z]+1:[A-Z]+\d+"/>',
-            f'<dimension ref="A1:AX{new_last_row}"/>'.encode(), head_slice, count=1)
+            f'<dimension ref="A1:AY{new_last_row}"/>'.encode(), head_slice, count=1)
 
         print(f"Streaming final sheet1.xml directly into the output .xlsx...")
         t_write = time.time()
@@ -1377,7 +1415,7 @@ def main():
                 for i in range(n_old_rows):
                     if i == 0:
                         header_chunk = sheet1_xml[pos["row_tag_start"][i]:pos["row_end"][i]]
-                        header_chunk = ensure_header_has_aw_ax(header_chunk)
+                        header_chunk = ensure_header_has_aw_ax_ay(header_chunk)
                         out.write(header_chunk)
                         last_end = pos["row_end"][i]
                         continue
@@ -1385,8 +1423,8 @@ def main():
                     rn = pos["row_nums"][i]
                     out.write(sheet1_xml[pos["row_tag_start"][i]:pos["aa_start"][i]])
                     out.write(build_aa_av_xml(rn, computed.loc[rn], proj_map,
-                                               vendor_map, PROJECT_INVIT_MAP,
-                                               unmapped_vendor, unmapped_invit, ss).encode())
+                                               vendor_map, PROJECT_INVIT_MAP, PROJECT_REGIONAL_HEAD_MAP,
+                                               unmapped_vendor, unmapped_invit, unmapped_regional, ss).encode())
                     last_end = pos["row_end"][i]
                 # tail of the original file (closes </sheetData> etc.) -- but
                 # we still need to inject the brand-new rows BEFORE that tail.
@@ -1398,11 +1436,11 @@ def main():
                         az_xml = build_new_row_az_xml(rn, new_rows_dict[k], ss)
                         out.write(az_xml.encode())
                         out.write(build_aa_av_xml(rn, computed.loc[rn], proj_map,
-                                                   vendor_map, PROJECT_INVIT_MAP,
-                                                   unmapped_vendor, unmapped_invit, ss).encode())
+                                                   vendor_map, PROJECT_INVIT_MAP, PROJECT_REGIONAL_HEAD_MAP,
+                                                   unmapped_vendor, unmapped_invit, unmapped_regional, ss).encode())
                 tail = re.sub(
                     rb'<autoFilter ref="[A-Z]+1:[A-Z]+\d+"',
-                    f'<autoFilter ref="A1:AX{new_last_row}"'.encode(), tail, count=1)
+                    f'<autoFilter ref="A1:AY{new_last_row}"'.encode(), tail, count=1)
                 out.write(tail)
             print(f"  wrote sheet1 in {time.time()-t_write:.1f}s "
                   f"({ss.new_ref_count:,} text-cell references written, "
@@ -1417,6 +1455,11 @@ def main():
                       f"PROJECT_INVIT_MAP -- their 'Invit/Non-Invit' (AX) will show #N/A. Add "
                       f"them to PROJECT_INVIT_MAP at the top of this script: "
                       f"{sorted(x for x in unmapped_invit if x)[:10]}")
+            if unmapped_regional:
+                print(f"  *** WARNING: {len(unmapped_regional)} project code(s) not found in "
+                      f"PROJECT_REGIONAL_HEAD_MAP -- their 'Regional Head' (AY) will show #N/A. "
+                      f"Add them to PROJECT_REGIONAL_HEAD_MAP at the top of this script: "
+                      f"{sorted(x for x in unmapped_regional if x)[:10]}")
 
             workbook_xml = patch_workbook_xml(workbook_xml, new_last_row)
             content_types_xml = patch_content_types(content_types_xml)
@@ -1455,9 +1498,9 @@ def main():
                       "(if present at all).")
 
     print(f"\nDone in {time.time()-t0:.1f}s -> {output_path}")
-    print("The file has no formulas left in Sheet1 (AA:AX are all static values) "
+    print("The file has no formulas left in Sheet1 (AA:AY are all static values) "
           "and fullCalcOnLoad is off, so it will open instantly with everything "
-          "already correct -- including Vendor/Inhouse and Invit/Non-Invit.")
+          "already correct -- including Vendor/Inhouse, Invit/Non-Invit, and Regional Head.")
 
 
 if __name__ == "__main__":
