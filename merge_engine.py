@@ -1,7 +1,7 @@
 """
-merge_month_and_fill_v4.py
+merge_month_and_fill_v5.py
 ---------------------------
-Drop-in replacement for merge_month_and_fill_v3.py. Same job as v3 --
+Drop-in replacement for merge_month_and_fill_v4.py. Same job as v4 --
 merge a month's raw rating files into the existing consolidated master
 workbook (Sheet1) and statically compute the derived columns so nothing
 needs to auto-recalculate on open -- but now ALSO computes:
@@ -31,7 +31,7 @@ error-prone. This script makes each month's merge a single command.
 
 USAGE
 -----
-    python merge_month_and_fill_v4.py <master.xlsx> <raw_month_folder> [output.xlsx]
+    python merge_month_and_fill_v5.py <master.xlsx> <raw_month_folder> [output.xlsx]
 
 <master.xlsx>        the consolidated workbook as of last month (e.g.
                       containing April+May+June data, with Sheet1 columns
@@ -59,7 +59,7 @@ NEXT MONTH
 Just point <master.xlsx> at THIS script's own output and give it the
 new month's folder:
 
-    python merge_month_and_fill_v4.py Consolidated_Apr_May_Jun_Jul.xlsx aug_files/ Consolidated_Apr_thru_Aug.xlsx
+    python merge_month_and_fill_v5.py Consolidated_Apr_May_Jun_Jul.xlsx aug_files/ Consolidated_Apr_thru_Aug.xlsx
 
 Each run's output becomes next month's input. The chain of months
 keeps growing; nothing has to be recomputed by hand.
@@ -440,11 +440,46 @@ def load_master_lookups(master_path: str):
 # Step 2: load & harmonize the raw monthly files. Unchanged from v1/v2.
 # ──────────────────────────────────────────────────────────────────────────
 
+def _read_excel_data_sheet(path: str) -> tuple:
+    """
+    Picks which sheet of a raw .xlsx holds the actual row-level data, and
+    flags whether that file's SPV Rating was ever calculated at all.
+
+    Two shapes show up in practice:
+      1. Plain ratings-list file: a single sheet (or the row-level sheet
+         is the only one that looks like real data) -- SPV Rating is
+         genuinely filled in per-row here, so the normal SPV/HO fallback
+         applies.
+      2. "...Ratings_List_REPORT.xlsx" shape: a 'Sheet1' tab holding a
+         pivoted/aggregated summary (Category, Total Audited, No of
+         Issues, ...) sitting ALONGSIDE a second sheet with the real
+         row-level data (Project Name, Roadaid ID, ... SPV Rating, HO
+         Rating, ...). In this shape SPV Rating is never calculated --
+         every value is "-" -- so SPV Final Rating must NOT fall back to
+         HO Rating for these rows.
+
+    Detection: if the workbook has a tab literally named "Sheet1" AND at
+    least one other tab, treat it as shape 2 -- read the other (non-
+    "Sheet1") tab as the data, and flag spv_calculated=False. Otherwise
+    read the first/only sheet normally and flag spv_calculated=True.
+    """
+    xl = pd.ExcelFile(path)
+    sheet_names = xl.sheet_names
+    if len(sheet_names) > 1 and any(_norm(s) == "sheet1" for s in sheet_names):
+        data_sheet = next(s for s in sheet_names if _norm(s) != "sheet1")
+        print(f"    (detected 'Sheet1' summary tab alongside '{data_sheet}' -- "
+              f"reading '{data_sheet}' as the data sheet; SPV Rating in this "
+              f"file is treated as not-calculated)")
+        return pd.read_excel(xl, sheet_name=data_sheet, dtype=str), False
+    return pd.read_excel(xl, sheet_name=sheet_names[0], dtype=str), True
+
+
 def load_raw_file(path: str) -> pd.DataFrame:
     if path.lower().endswith(".csv"):
         df = pd.read_csv(path, dtype=str, keep_default_na=True)
+        spv_calculated = True
     else:
-        df = pd.read_excel(path, dtype=str)
+        df, spv_calculated = _read_excel_data_sheet(path)
 
     rename = {}
     date_created_col = None
@@ -464,8 +499,9 @@ def load_raw_file(path: str) -> pd.DataFrame:
         raise ValueError(f"{path}: could not find a 'Date Created' column")
     df["_DateCreated"] = df[date_created_col]
     df["_SourceFile"] = os.path.basename(path)
+    df["_SPVCalculated"] = spv_calculated
 
-    return df[SHEET1_COLS + ["_DateCreated", "_SourceFile"]]
+    return df[SHEET1_COLS + ["_DateCreated", "_SourceFile", "_SPVCalculated"]]
 
 
 _TEMP_DIRS_TO_CLEAN = []
@@ -526,7 +562,7 @@ def load_all_raw_files(folder: str) -> pd.DataFrame:
     if not paths:
         print(f"  No .csv/.xlsx files found in {folder} -- recompute-only mode "
               f"(no new rows will be added, existing rows will just be re-fixed).")
-        return pd.DataFrame(columns=SHEET1_COLS + ["_DateCreated", "_SourceFile"])
+        return pd.DataFrame(columns=SHEET1_COLS + ["_DateCreated", "_SourceFile", "_SPVCalculated"])
 
     frames = []
     for p in paths:
@@ -566,7 +602,20 @@ def compute_new_rows(df: pd.DataFrame, category_map, asset_map, parameter_map,
             print(f"  NOTE: {bad_mask.sum()} non-numeric {label} value(s) kept as text: "
                   f"{bad_vals[:10]}{' ...' if len(bad_vals) > 10 else ''}")
 
-    df["SPV Final Rating"] = spv.where(spv.notna(), ho)
+    # SPV Final Rating: normally falls back to HO Rating whenever SPV
+    # Rating is missing. BUT some raw files (the "Sheet1 summary tab +
+    # ratings-list sheet" shape -- see _read_excel_data_sheet) never
+    # calculate SPV Rating at all; every value is "-". For rows from
+    # those files, falling back to HO would show a number that was never
+    # actually an SPV rating, so SPV Final Rating is left as "-" instead.
+    # Rows from normal (single-sheet / CSV) files keep the old fallback.
+    # HO Final Rating is unaffected either way -- it still falls back to
+    # SPV when HO itself is missing.
+    spv_final = spv.where(spv.notna(), ho).astype(object)
+    if "_SPVCalculated" in df.columns:
+        not_calc_mask = (~df["_SPVCalculated"].fillna(True).astype(bool)) & spv.isna()
+        spv_final[not_calc_mask.to_numpy()] = "-"
+    df["SPV Final Rating"] = spv_final
     df["HO Final Rating"] = ho.where(ho.notna(), spv)
 
     # IMPORTANT: format="mixed" is required here. When 27 files are
