@@ -261,10 +261,12 @@ VENDOR_MAP_FALLBACK_ROWS = [
 # with other entries). No sheet in the workbook holds this
 # mapping (unlike Vendor/Inhouse, which comes from Sheet5), so it's kept
 # here as a plain table. Add new project codes here as they show up.
+#
+# NOTE: DHMEPL was changed from "Invit" to "Non-Invit" per explicit request.
 # ──────────────────────────────────────────────────────────────────────────
 PROJECT_INVIT_MAP = {
     "ADTPL": "Non-Invit", "APEL": "Invit",     "BFHL": "Non-Invit", "BWHPL": "Invit",
-    "DATL": "Invit",      "DHMEPL": "Invit",   "FRHL": "Invit",     "GAEPL": "Invit",
+    "DATL": "Invit",      "DHMEPL": "Non-Invit", "FRHL": "Invit",    "GAEPL": "Invit",
     "JMTPL": "Invit",     "JUHPL": "Invit",    "KETPL": "Invit",    "KHEPL": "Non-Invit",
     "KMTPL": "Invit",     "KTIPL": "Invit",    "MBEL": "Invit",     "MHPL": "Invit",
     "MKTPL": "Invit",     "MSHP": "Invit",     "NAM": "Invit",      "NDEPL": "Invit",
