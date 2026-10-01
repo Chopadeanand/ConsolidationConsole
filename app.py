@@ -548,6 +548,8 @@ def _run_merge(master_path: str, month_input: str, output_path: str,
 
 if run_clicked:
     work_dir = tempfile.mkdtemp(prefix="consolidationconsole_")
+    log_placeholder = None  # created once we reach the logging UI below;
+                             # stays None if we fail before that point.
     try:
         master_path = os.path.join(work_dir, "master.xlsx")
         with open(master_path, "wb") as f:
@@ -603,6 +605,22 @@ if run_clicked:
         st.error("The merge stopped unexpectedly. Details below.")
         st.session_state["run_log"] = (st.session_state.get("run_log") or "") + "\n" + traceback.format_exc()
     finally:
+        # Paint the accumulated log (including any traceback just added
+        # above) immediately, in this same run -- previously it was only
+        # stored in session_state and didn't appear on screen until the
+        # user triggered a second, unrelated rerun (e.g. clicking Run
+        # merge again), which made failures look like they had "no
+        # details" the first time.
+        final_log = st.session_state.get("run_log")
+        if final_log:
+            if log_placeholder is not None:
+                log_placeholder.code(final_log, language=None)
+            else:
+                # We failed before the "Show logs" expander was even
+                # created (e.g. while saving an uploaded file) -- open
+                # a fresh one now so the error still isn't silent.
+                with st.expander("Show logs", expanded=True):
+                    st.code(final_log, language=None)
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
